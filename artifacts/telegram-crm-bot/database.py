@@ -4,11 +4,20 @@ from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "crm.db")
 
+DEFAULT_TAGS = [
+    "⭐ VIP",
+    "🆕 Новый",
+    "✅ Постоянный",
+    "⚠️ Проблемный",
+    "💰 Должник",
+]
+
 
 class Database:
     def __init__(self):
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._create_tables()
+        self._seed_tags()
 
     def _create_tables(self):
         self.conn.execute("""
@@ -29,7 +38,29 @@ class Database:
                 created_at TEXT NOT NULL
             )
         """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_tags (
+                client_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                PRIMARY KEY (client_id, tag_id),
+                FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )
+        """)
         self.conn.commit()
+
+    def _seed_tags(self):
+        existing = self.conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+        if existing == 0:
+            for name in DEFAULT_TAGS:
+                self.conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+            self.conn.commit()
 
     def add_client(self, name: str, phone: str, email: str = "", notes: str = "") -> int:
         cursor = self.conn.execute(
@@ -93,6 +124,7 @@ class Database:
         self.conn.commit()
 
     def delete_client(self, client_id: int):
+        self.conn.execute("DELETE FROM client_tags WHERE client_id = ?", (client_id,))
         self.conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
         self.conn.commit()
 
@@ -125,3 +157,37 @@ class Database:
             "SELECT 1 FROM blacklist WHERE phone = ?", (phone,)
         )
         return cursor.fetchone() is not None
+
+    def get_all_tags(self):
+        cursor = self.conn.execute("SELECT id, name FROM tags ORDER BY id")
+        return cursor.fetchall()
+
+    def get_client_tags(self, client_id: int):
+        cursor = self.conn.execute(
+            """SELECT t.id, t.name FROM tags t
+               JOIN client_tags ct ON ct.tag_id = t.id
+               WHERE ct.client_id = ?
+               ORDER BY t.id""",
+            (client_id,)
+        )
+        return cursor.fetchall()
+
+    def set_client_tags(self, client_id: int, tag_ids: list):
+        self.conn.execute("DELETE FROM client_tags WHERE client_id = ?", (client_id,))
+        for tag_id in tag_ids:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO client_tags (client_id, tag_id) VALUES (?, ?)",
+                (client_id, tag_id)
+            )
+        self.conn.commit()
+
+    def get_clients_by_tag(self, tag_id: int):
+        cursor = self.conn.execute(
+            """SELECT c.id, c.name, c.phone, c.email, c.notes, c.created_at
+               FROM clients c
+               JOIN client_tags ct ON ct.client_id = c.id
+               WHERE ct.tag_id = ?
+               ORDER BY c.name ASC""",
+            (tag_id,)
+        )
+        return cursor.fetchall()

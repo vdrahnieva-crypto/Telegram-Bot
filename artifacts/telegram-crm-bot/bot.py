@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 
-ADD_NAME, ADD_PHONE, ADD_EMAIL, ADD_NOTES = range(4)
+ADD_NAME, ADD_PHONE, ADD_EMAIL, ADD_NOTES, ADD_TAGS = range(5)
 SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
-EDIT_FIELD, EDIT_VALUE = range(2)
+EDIT_VALUE = 0
 BL_ADD_PHONE, BL_ADD_REASON = range(2)
 BL_REMOVE_PHONE = 0
 
@@ -42,6 +42,16 @@ def main_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
+def find_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("👤 По имени", callback_data="search_by_name")],
+        [InlineKeyboardButton("📞 По телефону", callback_data="search_by_phone")],
+        [InlineKeyboardButton("🏷 По тегу", callback_data="search_by_tag")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def blacklist_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton("➕ Добавить в ЧС", callback_data="bl_add")],
@@ -52,13 +62,49 @@ def blacklist_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def find_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("👤 По имени", callback_data="search_by_name")],
-        [InlineKeyboardButton("📞 По телефону", callback_data="search_by_phone")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+def _build_add_tags_keyboard(selected_ids: list, all_tags: list) -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for tag_id, tag_name in all_tags:
+        label = f"✓ {tag_name}" if tag_id in selected_ids else tag_name
+        row.append(InlineKeyboardButton(label, callback_data=f"addtag_{tag_id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✅ Готово", callback_data="addtags_done")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_client_tags_keyboard(client_id: int, selected_ids: list, all_tags: list) -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for tag_id, tag_name in all_tags:
+        label = f"✓ {tag_name}" if tag_id in selected_ids else tag_name
+        row.append(InlineKeyboardButton(label, callback_data=f"ctag_{client_id}_{tag_id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✅ Сохранить", callback_data=f"ctags_done_{client_id}")])
+    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_search_tag_keyboard(all_tags: list) -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for tag_id, tag_name in all_tags:
+        row.append(InlineKeyboardButton(tag_name, callback_data=f"stag_{tag_id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="find_client")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,15 +169,44 @@ async def skip_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["notes"] = update.message.text.strip()
-    return await save_client(update, context)
+    return await _show_add_tags(update.message, context)
 
 
 async def skip_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["notes"] = ""
-    return await save_client(update, context)
+    return await _show_add_tags(update.message, context)
 
 
-async def save_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _show_add_tags(message, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["selected_tags"] = []
+    all_tags = db.get_all_tags()
+    keyboard = _build_add_tags_keyboard([], all_tags)
+    await message.reply_text(
+        "🏷 Выберите *теги* для клиента (можно несколько).\n\nНажмите *✅ Готово*, когда выберете нужные:",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+    return ADD_TAGS
+
+
+async def toggle_add_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    tag_id = int(query.data.split("_")[1])
+    selected = context.user_data.setdefault("selected_tags", [])
+    if tag_id in selected:
+        selected.remove(tag_id)
+    else:
+        selected.append(tag_id)
+    all_tags = db.get_all_tags()
+    keyboard = _build_add_tags_keyboard(selected, all_tags)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+    return ADD_TAGS
+
+
+async def finish_add_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     data = context.user_data
     client_id = db.add_client(
         name=data.get("name", ""),
@@ -139,13 +214,20 @@ async def save_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
         email=data.get("email", ""),
         notes=data.get("notes", ""),
     )
+    selected_tags = data.get("selected_tags", [])
+    if selected_tags:
+        db.set_client_tags(client_id, selected_tags)
+    all_tags = db.get_all_tags()
+    tags_map = {t[0]: t[1] for t in all_tags}
+    tags_line = ", ".join(tags_map[t] for t in selected_tags if t in tags_map) or "—"
     keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
-    await update.message.reply_text(
+    await query.edit_message_text(
         f"✅ *Клиент сохранён!*\n\n"
         f"👤 Имя: {data.get('name')}\n"
         f"📞 Телефон: {data.get('phone')}\n"
         f"📧 Email: {data.get('email') or '—'}\n"
         f"📝 Заметки: {data.get('notes') or '—'}\n"
+        f"🏷 Теги: {tags_line}\n"
         f"🆔 ID: `{client_id}`",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -212,10 +294,8 @@ async def _send_search_results(update: Update, clients, query_text: str):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
-
     for client in clients:
         await send_client_card(update, client)
-
     await update.message.reply_text(
         f"Найдено клиентов: *{len(clients)}*.",
         parse_mode="Markdown",
@@ -223,19 +303,61 @@ async def _send_search_results(update: Update, clients, query_text: str):
     )
 
 
+async def search_by_tag_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    all_tags = db.get_all_tags()
+    keyboard = _build_search_tag_keyboard(all_tags)
+    await query.edit_message_text(
+        "🏷 Выберите тег для поиска:",
+        reply_markup=keyboard,
+    )
+
+
+async def do_search_by_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    tag_id = int(query.data.split("_")[1])
+    all_tags = db.get_all_tags()
+    tag_name = next((t[1] for t in all_tags if t[0] == tag_id), "—")
+    clients = db.get_clients_by_tag(tag_id)
+    if not clients:
+        keyboard = [
+            [InlineKeyboardButton("🏷 Другой тег", callback_data="search_by_tag")],
+            [InlineKeyboardButton("⬅️ В меню", callback_data="menu")],
+        ]
+        await query.edit_message_text(
+            f"😕 Клиентов с тегом *{tag_name}* не найдено.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+    await query.edit_message_text(
+        f"🏷 Тег *{tag_name}* — найдено клиентов: {len(clients)}",
+        parse_mode="Markdown",
+    )
+    for client in clients:
+        await send_client_card(query, client)
+    await query.message.reply_text("Что хотите сделать?", reply_markup=main_menu_keyboard())
+
+
 async def send_client_card(update_or_query, client):
     cid, name, phone, email, notes, created_at = client
+    tags = db.get_client_tags(cid)
+    tags_line = ", ".join(t[1] for t in tags) if tags else "—"
     keyboard = [
         [
             InlineKeyboardButton("✏️ Изменить", callback_data=f"edit_{cid}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{cid}"),
-        ]
+        ],
+        [InlineKeyboardButton("🏷 Изменить теги", callback_data=f"client_tags_{cid}")],
     ]
     text = (
         f"👤 *{name}*\n"
         f"📞 {phone}\n"
         f"📧 {email or '—'}\n"
         f"📝 {notes or '—'}\n"
+        f"🏷 {tags_line}\n"
         f"📅 Добавлен: {created_at[:10]}\n"
         f"🆔 ID: `{cid}`"
     )
@@ -249,22 +371,76 @@ async def send_client_card(update_or_query, client):
         )
 
 
+async def client_tags_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    client_id = int(query.data.split("_")[2])
+    client = db.get_client(client_id)
+    if not client:
+        await query.edit_message_text("Клиент не найден.")
+        return
+    all_tags = db.get_all_tags()
+    current_tags = db.get_client_tags(client_id)
+    selected_ids = [t[0] for t in current_tags]
+    context.user_data["edit_selected_tags"] = selected_ids.copy()
+    keyboard = _build_client_tags_keyboard(client_id, selected_ids, all_tags)
+    await query.edit_message_text(
+        f"🏷 Теги клиента *{client[1]}*:\n\nВыберите нужные теги:",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+async def toggle_client_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    client_id = int(parts[1])
+    tag_id = int(parts[2])
+    selected = context.user_data.get("edit_selected_tags", [])
+    if tag_id in selected:
+        selected.remove(tag_id)
+    else:
+        selected.append(tag_id)
+    context.user_data["edit_selected_tags"] = selected
+    all_tags = db.get_all_tags()
+    keyboard = _build_client_tags_keyboard(client_id, selected, all_tags)
+    await query.edit_message_reply_markup(reply_markup=keyboard)
+
+
+async def finish_client_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    client_id = int(query.data.split("_")[2])
+    selected = context.user_data.get("edit_selected_tags", [])
+    db.set_client_tags(client_id, selected)
+    client = db.get_client(client_id)
+    tags = db.get_client_tags(client_id)
+    tags_line = ", ".join(t[1] for t in tags) if tags else "—"
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+    await query.edit_message_text(
+        f"✅ Теги обновлены!\n\n"
+        f"👤 *{client[1]}*\n"
+        f"🏷 {tags_line}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    context.user_data.pop("edit_selected_tags", None)
+
+
 async def all_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     clients = db.get_all_clients()
-
     if not clients:
         await query.edit_message_text(
             "📋 Клиентов пока нет. Добавьте первого!",
             reply_markup=main_menu_keyboard(),
         )
         return
-
     await query.edit_message_text(f"📋 Всего клиентов: *{len(clients)}*", parse_mode="Markdown")
     for client in clients:
         await send_client_card(query, client)
-
     await query.message.reply_text("Что хотите сделать?", reply_markup=main_menu_keyboard())
 
 
@@ -276,7 +452,6 @@ async def delete_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client:
         await query.edit_message_text("Клиент не найден.")
         return
-
     keyboard = [
         [
             InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_{client_id}"),
@@ -313,7 +488,6 @@ async def edit_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client:
         await query.edit_message_text("Клиент не найден.")
         return
-
     keyboard = [
         [InlineKeyboardButton("👤 Имя", callback_data=f"editfield_{client_id}_name")],
         [InlineKeyboardButton("📞 Телефон", callback_data=f"editfield_{client_id}_phone")],
@@ -502,8 +676,8 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     header_font = Font(color="FFFFFF", bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center")
 
-    headers = ["ID", "Имя", "Телефон", "Email", "Заметки", "Дата добавления"]
-    col_widths = [6, 30, 18, 28, 35, 18]
+    headers = ["ID", "Имя", "Телефон", "Email", "Заметки", "Теги", "Дата добавления"]
+    col_widths = [6, 30, 18, 28, 35, 35, 18]
 
     for col, (header, width) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=1, column=col, value=header)
@@ -516,7 +690,9 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for row_idx, client in enumerate(clients, 2):
         cid, name, phone, email, notes, created_at = client
-        values = [cid, name, phone, email or "", notes or "", created_at[:10]]
+        tags = db.get_client_tags(cid)
+        tags_str = ", ".join(t[1] for t in tags) if tags else ""
+        values = [cid, name, phone, email or "", notes or "", tags_str, created_at[:10]]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
@@ -561,6 +737,10 @@ def main():
             ADD_NOTES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_notes),
                 CommandHandler("skip", skip_notes),
+            ],
+            ADD_TAGS: [
+                CallbackQueryHandler(toggle_add_tag, pattern=r"^addtag_\d+$"),
+                CallbackQueryHandler(finish_add_tags, pattern="^addtags_done$"),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -638,6 +818,11 @@ def main():
     app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
     app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
     app.add_handler(CallbackQueryHandler(export_excel, pattern="^export_excel$"))
+    app.add_handler(CallbackQueryHandler(search_by_tag_menu, pattern="^search_by_tag$"))
+    app.add_handler(CallbackQueryHandler(do_search_by_tag, pattern=r"^stag_\d+$"))
+    app.add_handler(CallbackQueryHandler(client_tags_menu, pattern=r"^client_tags_\d+$"))
+    app.add_handler(CallbackQueryHandler(toggle_client_tag, pattern=r"^ctag_\d+_\d+$"))
+    app.add_handler(CallbackQueryHandler(finish_client_tags, pattern=r"^ctags_done_\d+$"))
 
     logger.info("Бот запускается...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
