@@ -14,7 +14,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
 )
-from database import Database
+from database import Database, DB_PATH
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 db = Database()
 
-ADD_NAME, ADD_PHONE, ADD_EMAIL, ADD_NOTES, ADD_TAGS = range(5)
+ADD_NAME, ADD_PHONE, ADD_NOTES, ADD_TAGS = range(4)
 SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
 EDIT_VALUE = 0
 BL_ADD_PHONE, BL_ADD_REASON = range(2)
@@ -38,6 +38,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("📋 Все клиенты", callback_data="all_clients")],
         [InlineKeyboardButton("🚫 ЧС список", callback_data="blacklist_menu")],
         [InlineKeyboardButton("📥 Скачать Excel", callback_data="export_excel")],
+        [InlineKeyboardButton("💾 Резервная копия", callback_data="backup_db")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -143,37 +144,15 @@ async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = update.message.text.strip()
     await update.message.reply_text(
-        "📧 Введите *email* клиента (или /skip, чтобы пропустить):",
-        parse_mode="Markdown"
-    )
-    return ADD_EMAIL
-
-
-async def add_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["email"] = update.message.text.strip()
-    await update.message.reply_text(
-        "📝 Добавьте *заметки* о клиенте (или /skip, чтобы пропустить):",
-        parse_mode="Markdown"
-    )
-    return ADD_NOTES
-
-
-async def skip_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["email"] = ""
-    await update.message.reply_text(
-        "📝 Добавьте *заметки* о клиенте (или /skip, чтобы пропустить):",
+        "📝 Добавьте *заметку* о клиенте.\n\nОтправьте *Пропустить*, чтобы оставить пустой:",
         parse_mode="Markdown"
     )
     return ADD_NOTES
 
 
 async def add_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["notes"] = update.message.text.strip()
-    return await _show_add_tags(update.message, context)
-
-
-async def skip_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["notes"] = ""
+    text = update.message.text.strip()
+    context.user_data["notes"] = "" if text.lower() == "пропустить" else text
     return await _show_add_tags(update.message, context)
 
 
@@ -225,8 +204,7 @@ async def finish_add_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ *Клиент сохранён!*\n\n"
         f"👤 Имя: {data.get('name')}\n"
         f"📞 Телефон: {data.get('phone')}\n"
-        f"📧 Email: {data.get('email') or '—'}\n"
-        f"📝 Заметки: {data.get('notes') or '—'}\n"
+        f"📝 Заметка: {data.get('notes') or '—'}\n"
         f"🏷 Теги: {tags_line}\n"
         f"🆔 ID: `{client_id}`",
         parse_mode="Markdown",
@@ -350,12 +328,12 @@ async def send_client_card(update_or_query, client):
             InlineKeyboardButton("✏️ Изменить", callback_data=f"edit_{cid}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{cid}"),
         ],
+        [InlineKeyboardButton("📝 Изменить заметку", callback_data=f"editfield_{cid}_notes")],
         [InlineKeyboardButton("🏷 Изменить теги", callback_data=f"client_tags_{cid}")],
     ]
     text = (
         f"👤 *{name}*\n"
         f"📞 {phone}\n"
-        f"📧 {email or '—'}\n"
         f"📝 {notes or '—'}\n"
         f"🏷 {tags_line}\n"
         f"📅 Добавлен: {created_at[:10]}\n"
@@ -491,8 +469,7 @@ async def edit_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("👤 Имя", callback_data=f"editfield_{client_id}_name")],
         [InlineKeyboardButton("📞 Телефон", callback_data=f"editfield_{client_id}_phone")],
-        [InlineKeyboardButton("📧 Email", callback_data=f"editfield_{client_id}_email")],
-        [InlineKeyboardButton("📝 Заметки", callback_data=f"editfield_{client_id}_notes")],
+        [InlineKeyboardButton("📝 Заметка", callback_data=f"editfield_{client_id}_notes")],
         [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
     ]
     await query.edit_message_text(
@@ -510,9 +487,9 @@ async def edit_field_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field = parts[2]
     context.user_data["edit_client_id"] = client_id
     context.user_data["edit_field"] = field
-    field_labels = {"name": "Имя", "phone": "Телефон", "email": "Email", "notes": "Заметки"}
+    field_labels = {"name": "Имя", "phone": "Телефон", "notes": "Заметка"}
     await query.edit_message_text(
-        f"✏️ Введите новое значение для *{field_labels[field]}*:",
+        f"✏️ Введите новое значение для *{field_labels.get(field, field)}*:",
         parse_mode="Markdown"
     )
     return EDIT_VALUE
@@ -525,13 +502,12 @@ async def edit_value_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.update_client_field(client_id, field, new_value)
     client = db.get_client(client_id)
     keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
-    field_labels = {"name": "Имя", "phone": "Телефон", "email": "Email", "notes": "Заметки"}
+    field_labels = {"name": "Имя", "phone": "Телефон", "notes": "Заметка"}
     await update.message.reply_text(
         f"✅ *{field_labels.get(field, field)}* обновлено!\n\n"
         f"👤 Имя: {client[1]}\n"
         f"📞 Телефон: {client[2]}\n"
-        f"📧 Email: {client[3] or '—'}\n"
-        f"📝 Заметки: {client[4] or '—'}",
+        f"📝 Заметка: {client[4] or '—'}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -676,8 +652,8 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     header_font = Font(color="FFFFFF", bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center")
 
-    headers = ["ID", "Имя", "Телефон", "Email", "Заметки", "Теги", "Дата добавления"]
-    col_widths = [6, 30, 18, 28, 35, 35, 18]
+    headers = ["ID", "Имя", "Телефон", "Теги", "Заметка", "Дата добавления"]
+    col_widths = [6, 30, 18, 35, 40, 18]
 
     for col, (header, width) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=1, column=col, value=header)
@@ -692,7 +668,7 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cid, name, phone, email, notes, created_at = client
         tags = db.get_client_tags(cid)
         tags_str = ", ".join(t[1] for t in tags) if tags else ""
-        values = [cid, name, phone, email or "", notes or "", tags_str, created_at[:10]]
+        values = [cid, name, phone, tags_str, notes or "", created_at[:10]]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
@@ -718,6 +694,26 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def backup_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("⏳ Создаю резервную копию базы данных...")
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+    filename = f"crm_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    with open(DB_PATH, "rb") as f:
+        await query.message.reply_document(
+            document=f,
+            filename=filename,
+            caption=f"💾 *Резервная копия базы данных*\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    await query.edit_message_text(
+        "✅ Резервная копия отправлена.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -730,14 +726,7 @@ def main():
         states={
             ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
             ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
-            ADD_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_email),
-                CommandHandler("skip", skip_email),
-            ],
-            ADD_NOTES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_notes),
-                CommandHandler("skip", skip_notes),
-            ],
+            ADD_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_notes)],
             ADD_TAGS: [
                 CallbackQueryHandler(toggle_add_tag, pattern=r"^addtag_\d+$"),
                 CallbackQueryHandler(finish_add_tags, pattern="^addtags_done$"),
@@ -818,6 +807,7 @@ def main():
     app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
     app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
     app.add_handler(CallbackQueryHandler(export_excel, pattern="^export_excel$"))
+    app.add_handler(CallbackQueryHandler(backup_db, pattern="^backup_db$"))
     app.add_handler(CallbackQueryHandler(search_by_tag_menu, pattern="^search_by_tag$"))
     app.add_handler(CallbackQueryHandler(do_search_by_tag, pattern=r"^stag_\d+$"))
     app.add_handler(CallbackQueryHandler(client_tags_menu, pattern=r"^client_tags_\d+$"))
