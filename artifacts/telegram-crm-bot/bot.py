@@ -31,7 +31,7 @@ SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
 EDIT_VALUE = 0
 BL_ADD_PHONE, BL_ADD_REASON = range(2)
 BL_REMOVE_PHONE = 0
-IMPORT_PHOTO = 0
+IMPORT_TEXT = 0
 
 
 def main_menu_keyboard():
@@ -42,7 +42,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🚫 ЧС список", callback_data="blacklist_menu")],
         [InlineKeyboardButton("📥 Скачать Excel", callback_data="export_excel")],
         [InlineKeyboardButton("💾 Резервная копия", callback_data="backup_db")],
-        [InlineKeyboardButton("🖼 Импорт из фото", callback_data="import_photo")],
+        [InlineKeyboardButton("📋 Импорт из текста", callback_data="import_text")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -744,104 +744,101 @@ async def backup_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─── Photo import helpers ───────────────────────────────────────────────────
+# ─── Text import helpers ────────────────────────────────────────────────────
 
-def _ocr_available() -> bool:
-    try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
+# Matches phone numbers in various international formats:
+# +30698111111 | +30 698 333 3333 | 6982222222 | +7 999 123-45-67 | 8(999)123-45-67
+_PHONE_RE = re.compile(r'\+?\d[\d\s\-\(\)\.]{5,18}\d')
 
-
-_PHONE_RE = re.compile(
-    r'(?:\+?[78][\s\-\(]{0,3})?'
-    r'(?:\(?\d{3}\)?[\s\-\.]{0,2}\d{3}[\s\-\.]{0,2}\d{2}[\s\-\.]{0,2}\d{2})'
-)
-_NAME_RE = re.compile(r'^[А-ЯЁа-яёA-Za-z][А-ЯЁа-яёA-Za-z\s\-\.]{1,60}$')
+# Letters that look like a person/company name (Cyrillic + Latin)
+_NAME_CHARS = re.compile(r'[А-ЯЁа-яёA-Za-z]')
 
 
 def _normalize_phone(raw: str) -> str:
+    """Strip everything except digits; keep leading + if present."""
     digits = re.sub(r'\D', '', raw)
-    if len(digits) == 10:
-        digits = '7' + digits
-    elif len(digits) == 11 and digits[0] == '8':
-        digits = '7' + digits[1:]
-    if len(digits) not in (11,):
+    if len(digits) < 7:
         return ''
-    return '+' + digits
+    has_plus = raw.strip().startswith('+')
+    # Russian 10-digit mobile without country code → prepend +7
+    if not has_plus and len(digits) == 10:
+        return '+7' + digits
+    # Russian 11-digit starting with 8 → normalize to +7
+    if not has_plus and len(digits) == 11 and digits[0] == '8':
+        return '+7' + digits[1:]
+    return ('+' if has_plus else '') + digits
 
 
-def _parse_contacts_from_ocr(text: str) -> list[tuple[str, str]]:
-    lines = [l.strip() for l in text.splitlines()]
+def _extract_name_from_line(line: str, phone_match: re.Match) -> str:
+    """Remove the phone number from the line; return remaining text as name."""
+    before = line[:phone_match.start()].strip()
+    after = line[phone_match.end():].strip()
+    candidate = (before + ' ' + after).strip()
+    # Keep only parts that contain at least one letter
+    parts = [p for p in candidate.split() if _NAME_CHARS.search(p)]
+    return ' '.join(parts)
+
+
+def _parse_contacts_from_text(text: str) -> list[tuple[str, str]]:
+    """Return list of (normalized_phone, name) pairs."""
+    lines = [ln.strip() for ln in text.splitlines()]
     contacts: list[tuple[str, str]] = []
     seen: set[str] = set()
 
     for i, line in enumerate(lines):
+        if not line:
+            continue
         for m in _PHONE_RE.finditer(line):
-            norm = _normalize_phone(m.group())
+            raw = m.group()
+            norm = _normalize_phone(raw)
             if not norm or norm in seen:
                 continue
             seen.add(norm)
-            name = ""
-            for offset in (-1, 1, -2, 2):
-                idx = i + offset
-                if 0 <= idx < len(lines):
-                    candidate = lines[idx]
-                    if candidate and _NAME_RE.match(candidate):
-                        name = candidate.strip()
-                        break
-            contacts.append((norm, name or "Неизвестно"))
+
+            # 1) Try name from same line (words around the phone)
+            name = _extract_name_from_line(line, m)
+
+            # 2) Fall back to adjacent lines that have no phone numbers
+            if not name:
+                for offset in (-1, 1, -2, 2):
+                    idx = i + offset
+                    if 0 <= idx < len(lines):
+                        adj = lines[idx]
+                        if adj and not _PHONE_RE.search(adj) and _NAME_CHARS.search(adj):
+                            name = adj.strip()
+                            break
+
+            contacts.append((norm, name or "Без имени"))
 
     return contacts
 
 
-async def import_photo_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def import_text_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if not _ocr_available():
-        await query.edit_message_text(
-            "⚠️ OCR не установлен. Используйте импорт из текста.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]),
-        )
-        return ConversationHandler.END
     await query.edit_message_text(
-        "🖼 Отправьте фото или скриншот с номерами.\n\n"
-        "Бот попытается распознать контакты и добавить их автоматически.\n\n"
+        "📋 Отправьте скопированный текст из Telegram.\n"
+        "Я сам найду номера и названия.\n\n"
+        "Пример:\n"
+        "Анна салон +30698111111\n"
+        "Макс доставка 6982222222\n"
+        "Игорь\n"
+        "+30 698 333 3333\n\n"
         "/cancel — отменить",
     )
-    return IMPORT_PHOTO
+    return IMPORT_TEXT
 
 
-async def receive_import_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_import_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+    text = update.message.text or ""
 
-    photo = update.message.photo[-1]  # highest resolution
-    file = await photo.get_file()
-    buf = io.BytesIO()
-    await file.download_to_memory(buf)
-    buf.seek(0)
-
-    try:
-        from PIL import Image
-        import pytesseract
-        image = Image.open(buf)
-        text = pytesseract.image_to_string(image, lang="rus+eng")
-    except Exception as e:
-        logger.error("OCR error: %s", e)
-        await update.message.reply_text(
-            "❌ Ошибка распознавания. Попробуйте другое фото.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-        return ConversationHandler.END
-
-    contacts = _parse_contacts_from_ocr(text)
+    contacts = _parse_contacts_from_text(text)
 
     if not contacts:
         await update.message.reply_text(
-            "❌ Не распознано: номера не найдены на фото.\n\n"
-            "Попробуйте более чёткое изображение.",
+            "❌ Не распознано: номера не найдены в тексте.\n\n"
+            "Убедитесь, что в тексте есть номера телефонов.",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return ConversationHandler.END
@@ -849,32 +846,31 @@ async def receive_import_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     added = 0
     duplicates = 0
     failed = 0
+    user = update.message.from_user
 
     for phone, name in contacts:
         try:
-            existing = db.search_by_phone(phone)
-            if existing:
+            if db.search_by_phone(phone):
                 duplicates += 1
                 continue
-            user = update.message.from_user
             db.add_client(
                 name=name,
                 phone=phone,
-                notes="Импортирован из фото",
+                notes="Импортирован из текста",
                 added_by_user_id=user.id,
                 added_by_username=user.username,
             )
             added += 1
         except Exception as e:
-            logger.error("Failed to save contact %s: %s", phone, e)
+            logger.error("Text import failed for %s: %s", phone, e)
             failed += 1
 
-    lines = [f"✅ Добавлено: {added}", f"⚠️ Уже были: {duplicates}"]
+    result_lines = [f"✅ Добавлено: {added}", f"⚠️ Уже были: {duplicates}"]
     if failed:
-        lines.append(f"❌ Не распознано: {failed}")
+        result_lines.append(f"❌ Не распознано: {failed}")
 
     await update.message.reply_text(
-        "\n".join(lines),
+        "\n".join(result_lines),
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
     return ConversationHandler.END
@@ -968,16 +964,16 @@ def main():
     app.add_handler(bl_add_conv)
     app.add_handler(bl_remove_conv)
 
-    import_photo_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(import_photo_start, pattern="^import_photo$")],
+    import_text_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(import_text_start, pattern="^import_text$")],
         states={
-            IMPORT_PHOTO: [MessageHandler(filters.PHOTO, receive_import_photo)],
+            IMPORT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_import_text)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
         per_chat=True,
     )
-    app.add_handler(import_photo_conv)
+    app.add_handler(import_text_conv)
 
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
