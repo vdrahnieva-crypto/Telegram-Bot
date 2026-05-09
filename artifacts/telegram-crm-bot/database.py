@@ -17,6 +17,7 @@ class Database:
     def __init__(self):
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         self._create_tables()
+        self._migrate()
         self._seed_tags()
 
     def _create_tables(self):
@@ -27,7 +28,9 @@ class Database:
                 phone TEXT NOT NULL,
                 email TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                added_by_user_id INTEGER DEFAULT NULL,
+                added_by_username TEXT DEFAULT NULL
             )
         """)
         self.conn.execute("""
@@ -55,6 +58,17 @@ class Database:
         """)
         self.conn.commit()
 
+    def _migrate(self):
+        for col, definition in [
+            ("added_by_user_id", "INTEGER DEFAULT NULL"),
+            ("added_by_username", "TEXT DEFAULT NULL"),
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE clients ADD COLUMN {col} {definition}")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass
+
     def _seed_tags(self):
         existing = self.conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
         if existing == 0:
@@ -62,43 +76,48 @@ class Database:
                 self.conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
             self.conn.commit()
 
-    def add_client(self, name: str, phone: str, email: str = "", notes: str = "") -> int:
+    def add_client(
+        self,
+        name: str,
+        phone: str,
+        email: str = "",
+        notes: str = "",
+        added_by_user_id: int = None,
+        added_by_username: str = None,
+    ) -> int:
         cursor = self.conn.execute(
-            "INSERT INTO clients (name, phone, email, notes, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, phone, email, notes, datetime.now().isoformat())
+            """INSERT INTO clients
+               (name, phone, email, notes, created_at, added_by_user_id, added_by_username)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (name, phone, email, notes, datetime.now().isoformat(),
+             added_by_user_id, added_by_username)
         )
         self.conn.commit()
         return cursor.lastrowid
 
     def get_client(self, client_id: int):
         cursor = self.conn.execute(
-            "SELECT id, name, phone, email, notes, created_at FROM clients WHERE id = ?",
+            """SELECT id, name, phone, email, notes, created_at,
+                      added_by_user_id, added_by_username
+               FROM clients WHERE id = ?""",
             (client_id,)
         )
         return cursor.fetchone()
 
     def get_all_clients(self):
         cursor = self.conn.execute(
-            "SELECT id, name, phone, email, notes, created_at FROM clients ORDER BY name ASC"
-        )
-        return cursor.fetchall()
-
-    def search_clients(self, query: str):
-        like = f"%{query}%"
-        cursor = self.conn.execute(
-            """SELECT id, name, phone, email, notes, created_at FROM clients
-               WHERE name LIKE ? OR phone LIKE ?
-               ORDER BY name ASC""",
-            (like, like)
+            """SELECT id, name, phone, email, notes, created_at,
+                      added_by_user_id, added_by_username
+               FROM clients ORDER BY name ASC"""
         )
         return cursor.fetchall()
 
     def search_by_name(self, query: str):
         like = f"%{query}%"
         cursor = self.conn.execute(
-            """SELECT id, name, phone, email, notes, created_at FROM clients
-               WHERE name LIKE ?
-               ORDER BY name ASC""",
+            """SELECT id, name, phone, email, notes, created_at,
+                      added_by_user_id, added_by_username
+               FROM clients WHERE name LIKE ? ORDER BY name ASC""",
             (like,)
         )
         return cursor.fetchall()
@@ -106,9 +125,9 @@ class Database:
     def search_by_phone(self, query: str):
         like = f"%{query}%"
         cursor = self.conn.execute(
-            """SELECT id, name, phone, email, notes, created_at FROM clients
-               WHERE phone LIKE ?
-               ORDER BY name ASC""",
+            """SELECT id, name, phone, email, notes, created_at,
+                      added_by_user_id, added_by_username
+               FROM clients WHERE phone LIKE ? ORDER BY name ASC""",
             (like,)
         )
         return cursor.fetchall()
@@ -183,7 +202,8 @@ class Database:
 
     def get_clients_by_tag(self, tag_id: int):
         cursor = self.conn.execute(
-            """SELECT c.id, c.name, c.phone, c.email, c.notes, c.created_at
+            """SELECT c.id, c.name, c.phone, c.email, c.notes, c.created_at,
+                      c.added_by_user_id, c.added_by_username
                FROM clients c
                JOIN client_tags ct ON ct.client_id = c.id
                WHERE ct.tag_id = ?

@@ -187,11 +187,14 @@ async def finish_add_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = context.user_data
+    user = query.from_user
     client_id = db.add_client(
         name=data.get("name", ""),
         phone=data.get("phone", ""),
         email=data.get("email", ""),
         notes=data.get("notes", ""),
+        added_by_user_id=user.id,
+        added_by_username=user.username,
     )
     selected_tags = data.get("selected_tags", [])
     if selected_tags:
@@ -320,7 +323,7 @@ async def do_search_by_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_client_card(update_or_query, client):
-    cid, name, phone, email, notes, created_at = client
+    cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (*client, None, None)[:8]
     tags = db.get_client_tags(cid)
     tags_line = ", ".join(t[1] for t in tags) if tags else "—"
     keyboard = [
@@ -331,12 +334,19 @@ async def send_client_card(update_or_query, client):
         [InlineKeyboardButton("📝 Изменить заметку", callback_data=f"editfield_{cid}_notes")],
         [InlineKeyboardButton("🏷 Изменить теги", callback_data=f"client_tags_{cid}")],
     ]
+    if added_by_uname:
+        added_line = f"\n👤 Добавил: @{added_by_uname}"
+    elif added_by_uid:
+        added_line = f"\n👤 Добавил: #{added_by_uid}"
+    else:
+        added_line = ""
     text = (
         f"👤 *{name}*\n"
         f"📞 {phone}\n"
         f"📝 {notes or '—'}\n"
         f"🏷 {tags_line}\n"
-        f"📅 Добавлен: {created_at[:10]}\n"
+        f"📅 Добавлен: {created_at[:10]}"
+        f"{added_line}\n"
         f"🆔 ID: `{cid}`"
     )
     if hasattr(update_or_query, "message"):
@@ -652,8 +662,8 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     header_font = Font(color="FFFFFF", bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center")
 
-    headers = ["ID", "Имя", "Телефон", "Теги", "Заметка", "Дата добавления"]
-    col_widths = [6, 30, 18, 35, 40, 18]
+    headers = ["ID", "Имя", "Телефон", "Теги", "Заметка", "Дата добавления", "Кто добавил"]
+    col_widths = [6, 30, 18, 35, 40, 18, 22]
 
     for col, (header, width) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=1, column=col, value=header)
@@ -665,10 +675,11 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ws.row_dimensions[1].height = 20
 
     for row_idx, client in enumerate(clients, 2):
-        cid, name, phone, email, notes, created_at = client
+        cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (*client, None, None)[:8]
         tags = db.get_client_tags(cid)
         tags_str = ", ".join(t[1] for t in tags) if tags else ""
-        values = [cid, name, phone, tags_str, notes or "", created_at[:10]]
+        who = f"@{added_by_uname}" if added_by_uname else (f"#{added_by_uid}" if added_by_uid else "")
+        values = [cid, name, phone, tags_str, notes or "", created_at[:10], who]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
