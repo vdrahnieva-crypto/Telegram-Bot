@@ -7,6 +7,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
@@ -106,6 +107,21 @@ def _build_search_tag_keyboard(all_tags: list) -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="find_client")])
     return InlineKeyboardMarkup(rows)
+
+
+_GROUP_ONLY_TEXT = "⛔ Бот работает только внутри группы."
+
+
+async def _private_block_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat and update.effective_chat.type == "private":
+        await update.message.reply_text(_GROUP_ONLY_TEXT)
+        raise ApplicationHandlerStop
+
+
+async def _private_block_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat and update.effective_chat.type == "private":
+        await update.callback_query.answer(_GROUP_ONLY_TEXT, show_alert=True)
+        raise ApplicationHandlerStop
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -801,6 +817,9 @@ def main():
         per_message=False,
         per_chat=True,
     )
+
+    app.add_handler(MessageHandler(filters.ALL, _private_block_message), group=-1)
+    app.add_handler(CallbackQueryHandler(_private_block_callback), group=-1)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(add_conv)
