@@ -21,6 +21,14 @@ class Database:
                 created_at TEXT NOT NULL
             )
         """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone TEXT NOT NULL UNIQUE,
+                reason TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+        """)
         self.conn.commit()
 
     def add_client(self, name: str, phone: str, email: str = "", notes: str = "") -> int:
@@ -87,3 +95,33 @@ class Database:
     def delete_client(self, client_id: int):
         self.conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
         self.conn.commit()
+
+    def add_to_blacklist(self, phone: str, reason: str = "") -> bool:
+        try:
+            self.conn.execute(
+                "INSERT INTO blacklist (phone, reason, created_at) VALUES (?, ?, ?)",
+                (phone, reason, datetime.now().isoformat())
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def get_blacklist(self):
+        cursor = self.conn.execute(
+            "SELECT id, phone, reason, created_at FROM blacklist ORDER BY created_at DESC"
+        )
+        return cursor.fetchall()
+
+    def remove_from_blacklist(self, phone: str) -> bool:
+        cursor = self.conn.execute(
+            "DELETE FROM blacklist WHERE phone = ?", (phone,)
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def is_blacklisted(self, phone: str) -> bool:
+        cursor = self.conn.execute(
+            "SELECT 1 FROM blacklist WHERE phone = ?", (phone,)
+        )
+        return cursor.fetchone() is not None

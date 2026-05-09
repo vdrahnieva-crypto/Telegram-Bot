@@ -23,6 +23,8 @@ db = Database()
 ADD_NAME, ADD_PHONE, ADD_EMAIL, ADD_NOTES = range(4)
 SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
 EDIT_FIELD, EDIT_VALUE = range(2)
+BL_ADD_PHONE, BL_ADD_REASON = range(2)
+BL_REMOVE_PHONE = 0
 
 
 def main_menu_keyboard():
@@ -30,6 +32,17 @@ def main_menu_keyboard():
         [InlineKeyboardButton("➕ Добавить клиента", callback_data="add_client")],
         [InlineKeyboardButton("🔍 Найти клиента", callback_data="find_client")],
         [InlineKeyboardButton("📋 Все клиенты", callback_data="all_clients")],
+        [InlineKeyboardButton("🚫 ЧС список", callback_data="blacklist_menu")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def blacklist_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить в ЧС", callback_data="bl_add")],
+        [InlineKeyboardButton("📋 Показать ЧС", callback_data="bl_show")],
+        [InlineKeyboardButton("❌ Удалить из ЧС", callback_data="bl_remove")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -347,6 +360,128 @@ async def edit_value_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def blacklist_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    blacklist = db.get_blacklist()
+    count = len(blacklist)
+    await query.edit_message_text(
+        f"🚫 *ЧС список* — {count} номер(ов)\n\nВыберите действие:",
+        parse_mode="Markdown",
+        reply_markup=blacklist_menu_keyboard(),
+    )
+
+
+async def bl_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "🚫 Введите *номер телефона* для добавления в чёрный список:",
+        parse_mode="Markdown",
+    )
+    return BL_ADD_PHONE
+
+
+async def bl_add_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["bl_phone"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📝 Укажите *причину* (или /skip, чтобы пропустить):",
+        parse_mode="Markdown",
+    )
+    return BL_ADD_REASON
+
+
+async def bl_add_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["bl_reason"] = update.message.text.strip()
+    return await bl_save(update, context)
+
+
+async def bl_skip_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["bl_reason"] = ""
+    return await bl_save(update, context)
+
+
+async def bl_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = context.user_data.get("bl_phone", "")
+    reason = context.user_data.get("bl_reason", "")
+    added = db.add_to_blacklist(phone, reason)
+    keyboard = [[InlineKeyboardButton("⬅️ ЧС список", callback_data="blacklist_menu")]]
+    if added:
+        text = (
+            f"✅ Номер *{phone}* добавлен в чёрный список.\n"
+            f"📝 Причина: {reason or '—'}"
+        )
+    else:
+        text = f"⚠️ Номер *{phone}* уже есть в чёрном списке."
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def bl_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    blacklist = db.get_blacklist()
+    if not blacklist:
+        await query.edit_message_text(
+            "📋 Чёрный список пуст.",
+            reply_markup=blacklist_menu_keyboard(),
+        )
+        return
+    lines = []
+    for i, (bid, phone, reason, created_at) in enumerate(blacklist, 1):
+        entry = f"{i}. 📞 `{phone}`"
+        if reason:
+            entry += f"\n    📝 {reason}"
+        entry += f"\n    📅 {created_at[:10]}"
+        lines.append(entry)
+    text = "🚫 *Чёрный список:*\n\n" + "\n\n".join(lines)
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=blacklist_menu_keyboard(),
+    )
+
+
+async def bl_remove_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "❌ Введите *номер телефона* для удаления из чёрного списка:",
+        parse_mode="Markdown",
+    )
+    return BL_REMOVE_PHONE
+
+
+async def bl_remove_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text.strip()
+    removed = db.remove_from_blacklist(phone)
+    keyboard = [[InlineKeyboardButton("⬅️ ЧС список", callback_data="blacklist_menu")]]
+    if removed:
+        text = f"✅ Номер *{phone}* удалён из чёрного списка."
+    else:
+        text = f"😕 Номер *{phone}* не найден в чёрном списке."
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return ConversationHandler.END
+
+
+async def bl_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text(
+        "❌ Отменено.",
+        reply_markup=blacklist_menu_keyboard(),
+    )
+    return ConversationHandler.END
+
+
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -403,17 +538,45 @@ def main():
         per_chat=True,
     )
 
+    bl_add_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(bl_add_start, pattern="^bl_add$")],
+        states={
+            BL_ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_phone)],
+            BL_ADD_REASON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_reason),
+                CommandHandler("skip", bl_skip_reason),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", bl_cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    bl_remove_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(bl_remove_start, pattern="^bl_remove$")],
+        states={
+            BL_REMOVE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_remove_phone)],
+        },
+        fallbacks=[CommandHandler("cancel", bl_cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(add_conv)
     app.add_handler(search_name_conv)
     app.add_handler(search_phone_conv)
     app.add_handler(edit_conv)
+    app.add_handler(bl_add_conv)
+    app.add_handler(bl_remove_conv)
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
     app.add_handler(CallbackQueryHandler(all_clients, pattern="^all_clients$"))
     app.add_handler(CallbackQueryHandler(delete_client, pattern=r"^delete_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete_\d+$"))
     app.add_handler(CallbackQueryHandler(edit_client, pattern=r"^edit_\d+$"))
+    app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
+    app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
 
     logger.info("Бот запускается...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
