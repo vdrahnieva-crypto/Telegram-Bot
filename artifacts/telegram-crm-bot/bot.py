@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import logging
 from datetime import datetime
 from openpyxl import Workbook
@@ -30,6 +31,7 @@ SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
 EDIT_VALUE = 0
 BL_ADD_PHONE, BL_ADD_REASON = range(2)
 BL_REMOVE_PHONE = 0
+IMPORT_PHOTO = 0
 
 
 def main_menu_keyboard():
@@ -40,6 +42,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🚫 ЧС список", callback_data="blacklist_menu")],
         [InlineKeyboardButton("📥 Скачать Excel", callback_data="export_excel")],
         [InlineKeyboardButton("💾 Резервная копия", callback_data="backup_db")],
+        [InlineKeyboardButton("🖼 Импорт из фото", callback_data="import_photo")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -741,6 +744,142 @@ async def backup_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ─── Photo import helpers ───────────────────────────────────────────────────
+
+def _ocr_available() -> bool:
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+
+_PHONE_RE = re.compile(
+    r'(?:\+?[78][\s\-\(]{0,3})?'
+    r'(?:\(?\d{3}\)?[\s\-\.]{0,2}\d{3}[\s\-\.]{0,2}\d{2}[\s\-\.]{0,2}\d{2})'
+)
+_NAME_RE = re.compile(r'^[А-ЯЁа-яёA-Za-z][А-ЯЁа-яёA-Za-z\s\-\.]{1,60}$')
+
+
+def _normalize_phone(raw: str) -> str:
+    digits = re.sub(r'\D', '', raw)
+    if len(digits) == 10:
+        digits = '7' + digits
+    elif len(digits) == 11 and digits[0] == '8':
+        digits = '7' + digits[1:]
+    if len(digits) not in (11,):
+        return ''
+    return '+' + digits
+
+
+def _parse_contacts_from_ocr(text: str) -> list[tuple[str, str]]:
+    lines = [l.strip() for l in text.splitlines()]
+    contacts: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for i, line in enumerate(lines):
+        for m in _PHONE_RE.finditer(line):
+            norm = _normalize_phone(m.group())
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            name = ""
+            for offset in (-1, 1, -2, 2):
+                idx = i + offset
+                if 0 <= idx < len(lines):
+                    candidate = lines[idx]
+                    if candidate and _NAME_RE.match(candidate):
+                        name = candidate.strip()
+                        break
+            contacts.append((norm, name or "Неизвестно"))
+
+    return contacts
+
+
+async def import_photo_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not _ocr_available():
+        await query.edit_message_text(
+            "⚠️ OCR не установлен. Используйте импорт из текста.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]),
+        )
+        return ConversationHandler.END
+    await query.edit_message_text(
+        "🖼 Отправьте фото или скриншот с номерами.\n\n"
+        "Бот попытается распознать контакты и добавить их автоматически.\n\n"
+        "/cancel — отменить",
+    )
+    return IMPORT_PHOTO
+
+
+async def receive_import_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+
+    photo = update.message.photo[-1]  # highest resolution
+    file = await photo.get_file()
+    buf = io.BytesIO()
+    await file.download_to_memory(buf)
+    buf.seek(0)
+
+    try:
+        from PIL import Image
+        import pytesseract
+        image = Image.open(buf)
+        text = pytesseract.image_to_string(image, lang="rus+eng")
+    except Exception as e:
+        logger.error("OCR error: %s", e)
+        await update.message.reply_text(
+            "❌ Ошибка распознавания. Попробуйте другое фото.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return ConversationHandler.END
+
+    contacts = _parse_contacts_from_ocr(text)
+
+    if not contacts:
+        await update.message.reply_text(
+            "❌ Не распознано: номера не найдены на фото.\n\n"
+            "Попробуйте более чёткое изображение.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return ConversationHandler.END
+
+    added = 0
+    duplicates = 0
+    failed = 0
+
+    for phone, name in contacts:
+        try:
+            existing = db.search_by_phone(phone)
+            if existing:
+                duplicates += 1
+                continue
+            user = update.message.from_user
+            db.add_client(
+                name=name,
+                phone=phone,
+                notes="Импортирован из фото",
+                added_by_user_id=user.id,
+                added_by_username=user.username,
+            )
+            added += 1
+        except Exception as e:
+            logger.error("Failed to save contact %s: %s", phone, e)
+            failed += 1
+
+    lines = [f"✅ Добавлено: {added}", f"⚠️ Уже были: {duplicates}"]
+    if failed:
+        lines.append(f"❌ Не распознано: {failed}")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    return ConversationHandler.END
+
+
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -828,6 +967,18 @@ def main():
     app.add_handler(edit_conv)
     app.add_handler(bl_add_conv)
     app.add_handler(bl_remove_conv)
+
+    import_photo_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(import_photo_start, pattern="^import_photo$")],
+        states={
+            IMPORT_PHOTO: [MessageHandler(filters.PHOTO, receive_import_photo)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+    app.add_handler(import_photo_conv)
+
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
     app.add_handler(CallbackQueryHandler(all_clients, pattern="^all_clients$"))
