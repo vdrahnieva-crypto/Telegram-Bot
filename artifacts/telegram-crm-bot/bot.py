@@ -21,21 +21,31 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 ADD_NAME, ADD_PHONE, ADD_EMAIL, ADD_NOTES = range(4)
-SEARCH_INPUT = range(1)
+SEARCH_BY_NAME, SEARCH_BY_PHONE = range(2)
 EDIT_FIELD, EDIT_VALUE = range(2)
+
 
 def main_menu_keyboard():
     keyboard = [
-        [InlineKeyboardButton("➕ Add client", callback_data="add_client")],
-        [InlineKeyboardButton("🔍 Find client", callback_data="find_client")],
-        [InlineKeyboardButton("📋 All clients", callback_data="all_clients")],
+        [InlineKeyboardButton("➕ Добавить клиента", callback_data="add_client")],
+        [InlineKeyboardButton("🔍 Найти клиента", callback_data="find_client")],
+        [InlineKeyboardButton("📋 Все клиенты", callback_data="all_clients")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def find_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("👤 По имени", callback_data="search_by_name")],
+        [InlineKeyboardButton("📞 По телефону", callback_data="search_by_phone")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome to your CRM bot!\n\nWhat would you like to do?",
+        "👋 Добро пожаловать в CRM-бот!\n\nЧто хотите сделать?",
         reply_markup=main_menu_keyboard(),
     )
 
@@ -44,7 +54,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
-        "What would you like to do?",
+        "Что хотите сделать?",
         reply_markup=main_menu_keyboard(),
     )
 
@@ -53,20 +63,23 @@ async def add_client_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data.clear()
-    await query.edit_message_text("📝 Let's add a new client.\n\nEnter the client's *full name*:", parse_mode="Markdown")
+    await query.edit_message_text(
+        "📝 Добавляем нового клиента.\n\nВведите *полное имя* клиента:",
+        parse_mode="Markdown"
+    )
     return ADD_NAME
 
 
 async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text.strip()
-    await update.message.reply_text("📞 Enter the client's *phone number*:", parse_mode="Markdown")
+    await update.message.reply_text("📞 Введите *номер телефона* клиента:", parse_mode="Markdown")
     return ADD_PHONE
 
 
 async def add_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = update.message.text.strip()
     await update.message.reply_text(
-        "📧 Enter the client's *email* (or send /skip to leave empty):",
+        "📧 Введите *email* клиента (или /skip, чтобы пропустить):",
         parse_mode="Markdown"
     )
     return ADD_EMAIL
@@ -75,7 +88,7 @@ async def add_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["email"] = update.message.text.strip()
     await update.message.reply_text(
-        "📝 Add any *notes* about this client (or send /skip to leave empty):",
+        "📝 Добавьте *заметки* о клиенте (или /skip, чтобы пропустить):",
         parse_mode="Markdown"
     )
     return ADD_NOTES
@@ -84,7 +97,7 @@ async def add_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def skip_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["email"] = ""
     await update.message.reply_text(
-        "📝 Add any *notes* about this client (or send /skip to leave empty):",
+        "📝 Добавьте *заметки* о клиенте (или /skip, чтобы пропустить):",
         parse_mode="Markdown"
     )
     return ADD_NOTES
@@ -108,13 +121,13 @@ async def save_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
         email=data.get("email", ""),
         notes=data.get("notes", ""),
     )
-    keyboard = [[InlineKeyboardButton("⬅️ Back to menu", callback_data="menu")]]
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
     await update.message.reply_text(
-        f"✅ *Client saved!*\n\n"
-        f"👤 Name: {data.get('name')}\n"
-        f"📞 Phone: {data.get('phone')}\n"
+        f"✅ *Клиент сохранён!*\n\n"
+        f"👤 Имя: {data.get('name')}\n"
+        f"📞 Телефон: {data.get('phone')}\n"
         f"📧 Email: {data.get('email') or '—'}\n"
-        f"📝 Notes: {data.get('notes') or '—'}\n"
+        f"📝 Заметки: {data.get('notes') or '—'}\n"
         f"🆔 ID: `{client_id}`",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -126,55 +139,78 @@ async def save_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(
-        "❌ Cancelled.",
+        "❌ Отменено.",
         reply_markup=main_menu_keyboard(),
     )
     return ConversationHandler.END
 
 
-async def find_client_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def find_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
-        "🔍 Enter a *name* or *phone number* to search:",
-        parse_mode="Markdown"
+        "🔍 Как хотите найти клиента?",
+        reply_markup=find_menu_keyboard(),
     )
-    return SEARCH_INPUT
 
 
-async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def search_by_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("👤 Введите *имя* клиента для поиска:", parse_mode="Markdown")
+    return SEARCH_BY_NAME
+
+
+async def search_by_phone_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📞 Введите *номер телефона* для поиска:", parse_mode="Markdown")
+    return SEARCH_BY_PHONE
+
+
+async def do_search_by_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_text = update.message.text.strip()
-    clients = db.search_clients(query_text)
+    clients = db.search_by_name(query_text)
+    await _send_search_results(update, clients, query_text)
+    return ConversationHandler.END
 
+
+async def do_search_by_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query_text = update.message.text.strip()
+    clients = db.search_by_phone(query_text)
+    await _send_search_results(update, clients, query_text)
+    return ConversationHandler.END
+
+
+async def _send_search_results(update: Update, clients, query_text: str):
     if not clients:
         keyboard = [
-            [InlineKeyboardButton("🔍 Search again", callback_data="find_client")],
-            [InlineKeyboardButton("⬅️ Back to menu", callback_data="menu")],
+            [InlineKeyboardButton("🔍 Найти снова", callback_data="find_client")],
+            [InlineKeyboardButton("⬅️ В меню", callback_data="menu")],
         ]
         await update.message.reply_text(
-            f"😕 No clients found for *{query_text}*",
+            f"😕 Клиент не найден: *{query_text}*",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
-        return ConversationHandler.END
+        return
 
     for client in clients:
         await send_client_card(update, client)
 
     await update.message.reply_text(
-        f"Found *{len(clients)}* client(s).",
+        f"Найдено клиентов: *{len(clients)}*.",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
     )
-    return ConversationHandler.END
 
 
 async def send_client_card(update_or_query, client):
     cid, name, phone, email, notes, created_at = client
     keyboard = [
         [
-            InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{cid}"),
-            InlineKeyboardButton("🗑 Delete", callback_data=f"delete_{cid}"),
+            InlineKeyboardButton("✏️ Изменить", callback_data=f"edit_{cid}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{cid}"),
         ]
     ]
     text = (
@@ -182,7 +218,7 @@ async def send_client_card(update_or_query, client):
         f"📞 {phone}\n"
         f"📧 {email or '—'}\n"
         f"📝 {notes or '—'}\n"
-        f"📅 Added: {created_at[:10]}\n"
+        f"📅 Добавлен: {created_at[:10]}\n"
         f"🆔 ID: `{cid}`"
     )
     if hasattr(update_or_query, "message"):
@@ -202,16 +238,16 @@ async def all_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not clients:
         await query.edit_message_text(
-            "📋 No clients yet. Add your first one!",
+            "📋 Клиентов пока нет. Добавьте первого!",
             reply_markup=main_menu_keyboard(),
         )
         return
 
-    await query.edit_message_text(f"📋 You have *{len(clients)}* client(s):", parse_mode="Markdown")
+    await query.edit_message_text(f"📋 Всего клиентов: *{len(clients)}*", parse_mode="Markdown")
     for client in clients:
         await send_client_card(query, client)
 
-    await query.message.reply_text("What would you like to do?", reply_markup=main_menu_keyboard())
+    await query.message.reply_text("Что хотите сделать?", reply_markup=main_menu_keyboard())
 
 
 async def delete_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,17 +256,17 @@ async def delete_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_id = int(query.data.split("_")[1])
     client = db.get_client(client_id)
     if not client:
-        await query.edit_message_text("Client not found.")
+        await query.edit_message_text("Клиент не найден.")
         return
 
     keyboard = [
         [
-            InlineKeyboardButton("✅ Yes, delete", callback_data=f"confirm_delete_{client_id}"),
-            InlineKeyboardButton("❌ Cancel", callback_data="menu"),
+            InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_{client_id}"),
+            InlineKeyboardButton("❌ Отмена", callback_data="menu"),
         ]
     ]
     await query.edit_message_text(
-        f"🗑 Are you sure you want to delete *{client[1]}*?",
+        f"🗑 Удалить клиента *{client[1]}*?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -241,10 +277,10 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     client_id = int(query.data.split("_")[2])
     client = db.get_client(client_id)
-    name = client[1] if client else "Client"
+    name = client[1] if client else "Клиент"
     db.delete_client(client_id)
     await query.edit_message_text(
-        f"✅ *{name}* has been deleted.",
+        f"✅ *{name}* удалён.",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(),
     )
@@ -257,18 +293,18 @@ async def edit_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["edit_client_id"] = client_id
     client = db.get_client(client_id)
     if not client:
-        await query.edit_message_text("Client not found.")
+        await query.edit_message_text("Клиент не найден.")
         return
 
     keyboard = [
-        [InlineKeyboardButton("👤 Name", callback_data=f"editfield_{client_id}_name")],
-        [InlineKeyboardButton("📞 Phone", callback_data=f"editfield_{client_id}_phone")],
+        [InlineKeyboardButton("👤 Имя", callback_data=f"editfield_{client_id}_name")],
+        [InlineKeyboardButton("📞 Телефон", callback_data=f"editfield_{client_id}_phone")],
         [InlineKeyboardButton("📧 Email", callback_data=f"editfield_{client_id}_email")],
-        [InlineKeyboardButton("📝 Notes", callback_data=f"editfield_{client_id}_notes")],
-        [InlineKeyboardButton("⬅️ Cancel", callback_data="menu")],
+        [InlineKeyboardButton("📝 Заметки", callback_data=f"editfield_{client_id}_notes")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
     ]
     await query.edit_message_text(
-        f"✏️ Editing *{client[1]}*\n\nWhich field would you like to update?",
+        f"✏️ Редактирование: *{client[1]}*\n\nКакое поле изменить?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -282,9 +318,9 @@ async def edit_field_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field = parts[2]
     context.user_data["edit_client_id"] = client_id
     context.user_data["edit_field"] = field
-    field_labels = {"name": "Name", "phone": "Phone", "email": "Email", "notes": "Notes"}
+    field_labels = {"name": "Имя", "phone": "Телефон", "email": "Email", "notes": "Заметки"}
     await query.edit_message_text(
-        f"✏️ Enter the new *{field_labels[field]}*:",
+        f"✏️ Введите новое значение для *{field_labels[field]}*:",
         parse_mode="Markdown"
     )
     return EDIT_VALUE
@@ -296,13 +332,14 @@ async def edit_value_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field = context.user_data.get("edit_field")
     db.update_client_field(client_id, field, new_value)
     client = db.get_client(client_id)
-    keyboard = [[InlineKeyboardButton("⬅️ Back to menu", callback_data="menu")]]
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+    field_labels = {"name": "Имя", "phone": "Телефон", "email": "Email", "notes": "Заметки"}
     await update.message.reply_text(
-        f"✅ *{field.capitalize()}* updated!\n\n"
-        f"👤 Name: {client[1]}\n"
-        f"📞 Phone: {client[2]}\n"
+        f"✅ *{field_labels.get(field, field)}* обновлено!\n\n"
+        f"👤 Имя: {client[1]}\n"
+        f"📞 Телефон: {client[2]}\n"
         f"📧 Email: {client[3] or '—'}\n"
-        f"📝 Notes: {client[4] or '—'}",
+        f"📝 Заметки: {client[4] or '—'}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -336,10 +373,20 @@ def main():
         per_chat=True,
     )
 
-    find_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(find_client_start, pattern="^find_client$")],
+    search_name_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(search_by_name_start, pattern="^search_by_name$")],
         states={
-            SEARCH_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_input)],
+            SEARCH_BY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_name)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    search_phone_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(search_by_phone_start, pattern="^search_by_phone$")],
+        states={
+            SEARCH_BY_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_phone)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -358,15 +405,17 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(add_conv)
-    app.add_handler(find_conv)
+    app.add_handler(search_name_conv)
+    app.add_handler(search_phone_conv)
     app.add_handler(edit_conv)
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
     app.add_handler(CallbackQueryHandler(all_clients, pattern="^all_clients$"))
     app.add_handler(CallbackQueryHandler(delete_client, pattern=r"^delete_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete_\d+$"))
     app.add_handler(CallbackQueryHandler(edit_client, pattern=r"^edit_\d+$"))
 
-    logger.info("Bot is starting...")
+    logger.info("Бот запускается...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

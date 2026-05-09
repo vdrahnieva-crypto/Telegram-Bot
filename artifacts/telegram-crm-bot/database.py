@@ -54,6 +54,26 @@ class Database:
         )
         return cursor.fetchall()
 
+    def search_by_name(self, query: str):
+        like = f"%{query}%"
+        cursor = self.conn.execute(
+            """SELECT id, name, phone, email, notes, created_at FROM clients
+               WHERE name LIKE ?
+               ORDER BY name ASC""",
+            (like,)
+        )
+        return cursor.fetchall()
+
+    def search_by_phone(self, query: str):
+        like = f"%{query}%"
+        cursor = self.conn.execute(
+            """SELECT id, name, phone, email, notes, created_at FROM clients
+               WHERE phone LIKE ?
+               ORDER BY name ASC""",
+            (like,)
+        )
+        return cursor.fetchall()
+
     def update_client_field(self, client_id: int, field: str, value: str):
         allowed = {"name", "phone", "email", "notes"}
         if field not in allowed:
