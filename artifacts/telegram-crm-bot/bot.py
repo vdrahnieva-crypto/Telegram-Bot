@@ -1,5 +1,9 @@
 import os
+import io
 import logging
+from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -33,6 +37,7 @@ def main_menu_keyboard():
         [InlineKeyboardButton("🔍 Найти клиента", callback_data="find_client")],
         [InlineKeyboardButton("📋 Все клиенты", callback_data="all_clients")],
         [InlineKeyboardButton("🚫 ЧС список", callback_data="blacklist_menu")],
+        [InlineKeyboardButton("📥 Скачать Excel", callback_data="export_excel")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -482,6 +487,61 @@ async def bl_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("⏳ Формирую Excel файл...")
+
+    clients = db.get_all_clients()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Клиенты"
+
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=11)
+    center = Alignment(horizontal="center", vertical="center")
+
+    headers = ["ID", "Имя", "Телефон", "Email", "Заметки", "Дата добавления"]
+    col_widths = [6, 30, 18, 28, 35, 18]
+
+    for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        ws.column_dimensions[cell.column_letter].width = width
+
+    ws.row_dimensions[1].height = 20
+
+    for row_idx, client in enumerate(clients, 2):
+        cid, name, phone, email, notes, created_at = client
+        values = [cid, name, phone, email or "", notes or "", created_at[:10]]
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[row_idx].height = 18
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"clients_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
+
+    await query.message.reply_document(
+        document=buffer,
+        filename=filename,
+        caption=f"📊 Клиентская база — *{len(clients)}* записей\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+    await query.edit_message_text(
+        "✅ Файл Excel сформирован и отправлен.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -577,6 +637,7 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_client, pattern=r"^edit_\d+$"))
     app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
     app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
+    app.add_handler(CallbackQueryHandler(export_excel, pattern="^export_excel$"))
 
     logger.info("Бот запускается...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
