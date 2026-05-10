@@ -755,18 +755,32 @@ _NAME_CHARS = re.compile(r'[А-ЯЁа-яёA-Za-z]')
 
 
 def _normalize_phone(raw: str) -> str:
-    """Strip everything except digits; keep leading + if present."""
     digits = re.sub(r'\D', '', raw)
-    if len(digits) < 7:
-        return ''
-    has_plus = raw.strip().startswith('+')
-    # Russian 10-digit mobile without country code → prepend +7
-    if not has_plus and len(digits) == 10:
+    # Normalize Russian: leading 8 → 7
+    if digits.startswith('8'):
+        digits = '7' + digits[1:]
+    # Russian 11-digit (7XXXXXXXXXX)
+    if len(digits) == 11 and digits.startswith('7'):
+        return '+' + digits
+    # Russian 10-digit without country code
+    if len(digits) == 10 and not raw.strip().startswith('+'):
         return '+7' + digits
-    # Russian 11-digit starting with 8 → normalize to +7
-    if not has_plus and len(digits) == 11 and digits[0] == '8':
-        return '+7' + digits[1:]
-    return ('+' if has_plus else '') + digits
+    # International with explicit + (e.g. +30698111111)
+    if raw.strip().startswith('+') and len(digits) >= 7:
+        return '+' + digits
+    # Any other number with enough digits
+    if len(digits) >= 7:
+        return digits
+    return ''
+
+
+def _check_phone(phone: str) -> str:
+    """Returns 'blacklisted', 'exists', or 'new' — queries live SQLite DB."""
+    if db.is_blacklisted(phone):
+        return 'blacklisted'
+    if db.search_by_phone(phone):
+        return 'exists'
+    return 'new'
 
 
 def _extract_name_from_line(line: str, phone_match: re.Match) -> str:
@@ -845,27 +859,33 @@ async def receive_import_text(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     added = 0
     duplicates = 0
+    blacklisted = 0
     failed = 0
     user = update.message.from_user
 
     for phone, name in contacts:
         try:
-            if db.search_by_phone(phone):
+            status = _check_phone(phone)
+            if status == 'blacklisted':
+                blacklisted += 1
+            elif status == 'exists':
                 duplicates += 1
-                continue
-            db.add_client(
-                name=name,
-                phone=phone,
-                notes="Импортирован из текста",
-                added_by_user_id=user.id,
-                added_by_username=user.username,
-            )
-            added += 1
+            else:
+                db.add_client(
+                    name=name,
+                    phone=phone,
+                    notes="Импортирован из текста",
+                    added_by_user_id=user.id,
+                    added_by_username=user.username,
+                )
+                added += 1
         except Exception as e:
             logger.error("Text import failed for %s: %s", phone, e)
             failed += 1
 
     result_lines = [f"✅ Добавлено: {added}", f"⚠️ Уже были: {duplicates}"]
+    if blacklisted:
+        result_lines.append(f"🚫 В чёрном списке: {blacklisted}")
     if failed:
         result_lines.append(f"❌ Не распознано: {failed}")
 
