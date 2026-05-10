@@ -896,6 +896,67 @@ async def receive_import_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
+# ─── Auto phone search ───────────────────────────────────────────────────────
+
+class _PhoneLikeFilter(filters.MessageFilter):
+    """Matches messages whose entire content looks like a phone number."""
+    _PAT = re.compile(r'^[\+\d][\d\s\-\(\)\.]{4,22}$')
+
+    def filter(self, message):
+        if not message.text:
+            return False
+        t = message.text.strip()
+        if not self._PAT.match(t):
+            return False
+        return len(re.sub(r'\D', '', t)) >= 7
+
+
+_phone_like = _PhoneLikeFilter()
+
+
+async def auto_search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    digits = re.sub(r'\D', '', raw)
+
+    # search_by_phone uses LIKE %digits% so it matches +7xxx, 7xxx, 8xxx, etc.
+    clients = list(db.search_by_phone(digits))
+
+    # Also try 8↔7 variant to cover both storage formats
+    if digits.startswith('7') and len(digits) == 11:
+        alt = '8' + digits[1:]
+        seen_ids = {c[0] for c in clients}
+        for c in db.search_by_phone(alt):
+            if c[0] not in seen_ids:
+                clients.append(c)
+    elif digits.startswith('8') and len(digits) == 11:
+        alt = '7' + digits[1:]
+        seen_ids = {c[0] for c in clients}
+        for c in db.search_by_phone(alt):
+            if c[0] not in seen_ids:
+                clients.append(c)
+
+    if not clients:
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить клиента", callback_data="add_client")],
+            [InlineKeyboardButton("📋 В меню", callback_data="menu")],
+        ]
+        await update.message.reply_text(
+            "❌ Клиент не найден",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    for client in clients:
+        await send_client_card(update, client)
+
+    if len(clients) > 1:
+        await update.message.reply_text(
+            f"Найдено: *{len(clients)}* совпадения.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_keyboard(),
+        )
+
+
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -994,6 +1055,10 @@ def main():
         per_chat=True,
     )
     app.add_handler(import_text_conv)
+
+    # Auto phone search — registered after all ConversationHandlers so those
+    # always take priority when a user is mid-conversation.
+    app.add_handler(MessageHandler(_phone_like & filters.TEXT, auto_search_phone))
 
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
     app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
