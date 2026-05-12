@@ -19,8 +19,7 @@ from telegram.ext import (
 from database import Database, DB_PATH
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,9 @@ def blacklist_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def _build_add_tags_keyboard(selected_ids: list, all_tags: list) -> InlineKeyboardMarkup:
+def _build_add_tags_keyboard(
+    selected_ids: list, all_tags: list
+) -> InlineKeyboardMarkup:
     rows = []
     row = []
     for tag_id, tag_name in all_tags:
@@ -82,18 +83,24 @@ def _build_add_tags_keyboard(selected_ids: list, all_tags: list) -> InlineKeyboa
     return InlineKeyboardMarkup(rows)
 
 
-def _build_client_tags_keyboard(client_id: int, selected_ids: list, all_tags: list) -> InlineKeyboardMarkup:
+def _build_client_tags_keyboard(
+    client_id: int, selected_ids: list, all_tags: list
+) -> InlineKeyboardMarkup:
     rows = []
     row = []
     for tag_id, tag_name in all_tags:
         label = f"✓ {tag_name}" if tag_id in selected_ids else tag_name
-        row.append(InlineKeyboardButton(label, callback_data=f"ctag_{client_id}_{tag_id}"))
+        row.append(
+            InlineKeyboardButton(label, callback_data=f"ctag_{client_id}_{tag_id}")
+        )
         if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton("✅ Сохранить", callback_data=f"ctags_done_{client_id}")])
+    rows.append(
+        [InlineKeyboardButton("✅ Сохранить", callback_data=f"ctags_done_{client_id}")]
+    )
     rows.append([InlineKeyboardButton("❌ Отмена", callback_data="menu")])
     return InlineKeyboardMarkup(rows)
 
@@ -149,14 +156,16 @@ async def add_client_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await query.edit_message_text(
         "📝 Добавляем нового клиента.\n\nВведите *полное имя* клиента:",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
     return ADD_NAME
 
 
 async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text.strip()
-    await update.message.reply_text("📞 Введите *номер телефона* клиента:", parse_mode="Markdown")
+    await update.message.reply_text(
+        "📞 Введите *номер телефона* клиента:", parse_mode="Markdown"
+    )
     return ADD_PHONE
 
 
@@ -164,7 +173,7 @@ async def add_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = update.message.text.strip()
     await update.message.reply_text(
         "📝 Добавьте *заметку* о клиенте.\n\nОтправьте *Пропустить*, чтобы оставить пустой:",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
     return ADD_NOTES
 
@@ -257,14 +266,18 @@ async def find_client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_by_name_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("👤 Введите *имя* клиента для поиска:", parse_mode="Markdown")
+    await query.edit_message_text(
+        "👤 Введите *имя* клиента для поиска:", parse_mode="Markdown"
+    )
     return SEARCH_BY_NAME
 
 
 async def search_by_phone_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📞 Введите *номер телефона* для поиска:", parse_mode="Markdown")
+    await query.edit_message_text(
+        "📞 Введите *номер телефона* для поиска:", parse_mode="Markdown"
+    )
     return SEARCH_BY_PHONE
 
 
@@ -338,11 +351,17 @@ async def do_search_by_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     for client in clients:
         await send_client_card(query, client)
-    await query.message.reply_text("Что хотите сделать?", reply_markup=main_menu_keyboard())
+    await query.message.reply_text(
+        "Что хотите сделать?", reply_markup=main_menu_keyboard()
+    )
 
 
 async def send_client_card(update_or_query, client):
-    cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (*client, None, None)[:8]
+    cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (
+        *client,
+        None,
+        None,
+    )[:8]
     tags = db.get_client_tags(cid)
     tags_line = ", ".join(t[1] for t in tags) if tags else "—"
     keyboard = [
@@ -350,7 +369,11 @@ async def send_client_card(update_or_query, client):
             InlineKeyboardButton("✏️ Изменить", callback_data=f"edit_{cid}"),
             InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{cid}"),
         ],
-        [InlineKeyboardButton("📝 Изменить заметку", callback_data=f"editfield_{cid}_notes")],
+        [
+            InlineKeyboardButton(
+                "📝 Изменить заметку", callback_data=f"editfield_{cid}_notes"
+            )
+        ],
         [InlineKeyboardButton("🏷 Изменить теги", callback_data=f"client_tags_{cid}")],
     ]
     if added_by_uname:
@@ -426,9 +449,7 @@ async def finish_client_tags(update: Update, context: ContextTypes.DEFAULT_TYPE)
     tags_line = ", ".join(t[1] for t in tags) if tags else "—"
     keyboard = [[InlineKeyboardButton("⬅️ В меню", callback_data="menu")]]
     await query.edit_message_text(
-        f"✅ Теги обновлены!\n\n"
-        f"👤 *{client[1]}*\n"
-        f"🏷 {tags_line}",
+        f"✅ Теги обновлены!\n\n👤 *{client[1]}*\n🏷 {tags_line}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -445,10 +466,14 @@ async def all_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard(),
         )
         return
-    await query.edit_message_text(f"📋 Всего клиентов: *{len(clients)}*", parse_mode="Markdown")
+    await query.edit_message_text(
+        f"📋 Всего клиентов: *{len(clients)}*", parse_mode="Markdown"
+    )
     for client in clients:
         await send_client_card(query, client)
-    await query.message.reply_text("Что хотите сделать?", reply_markup=main_menu_keyboard())
+    await query.message.reply_text(
+        "Что хотите сделать?", reply_markup=main_menu_keyboard()
+    )
 
 
 async def delete_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,7 +486,9 @@ async def delete_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = [
         [
-            InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_{client_id}"),
+            InlineKeyboardButton(
+                "✅ Да, удалить", callback_data=f"confirm_delete_{client_id}"
+            ),
             InlineKeyboardButton("❌ Отмена", callback_data="menu"),
         ]
     ]
@@ -497,8 +524,16 @@ async def edit_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = [
         [InlineKeyboardButton("👤 Имя", callback_data=f"editfield_{client_id}_name")],
-        [InlineKeyboardButton("📞 Телефон", callback_data=f"editfield_{client_id}_phone")],
-        [InlineKeyboardButton("📝 Заметка", callback_data=f"editfield_{client_id}_notes")],
+        [
+            InlineKeyboardButton(
+                "📞 Телефон", callback_data=f"editfield_{client_id}_phone"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📝 Заметка", callback_data=f"editfield_{client_id}_notes"
+            )
+        ],
         [InlineKeyboardButton("❌ Отмена", callback_data="menu")],
     ]
     await query.edit_message_text(
@@ -519,7 +554,7 @@ async def edit_field_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     field_labels = {"name": "Имя", "phone": "Телефон", "notes": "Заметка"}
     await query.edit_message_text(
         f"✏️ Введите новое значение для *{field_labels.get(field, field)}*:",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
     return EDIT_VALUE
 
@@ -592,8 +627,7 @@ async def bl_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("⬅️ ЧС список", callback_data="blacklist_menu")]]
     if added:
         text = (
-            f"✅ Номер *{phone}* добавлен в чёрный список.\n"
-            f"📝 Причина: {reason or '—'}"
+            f"✅ Номер *{phone}* добавлен в чёрный список.\n📝 Причина: {reason or '—'}"
         )
     else:
         text = f"⚠️ Номер *{phone}* уже есть в чёрном списке."
@@ -677,11 +711,21 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ws = wb.active
     ws.title = "Клиенты"
 
-    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_fill = PatternFill(
+        start_color="1F4E79", end_color="1F4E79", fill_type="solid"
+    )
     header_font = Font(color="FFFFFF", bold=True, size=11)
     center = Alignment(horizontal="center", vertical="center")
 
-    headers = ["ID", "Имя", "Телефон", "Теги", "Заметка", "Дата добавления", "Кто добавил"]
+    headers = [
+        "ID",
+        "Имя",
+        "Телефон",
+        "Теги",
+        "Заметка",
+        "Дата добавления",
+        "Кто добавил",
+    ]
     col_widths = [6, 30, 18, 35, 40, 18, 22]
 
     for col, (header, width) in enumerate(zip(headers, col_widths), 1):
@@ -694,10 +738,18 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ws.row_dimensions[1].height = 20
 
     for row_idx, client in enumerate(clients, 2):
-        cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (*client, None, None)[:8]
+        cid, name, phone, email, notes, created_at, added_by_uid, added_by_uname = (
+            *client,
+            None,
+            None,
+        )[:8]
         tags = db.get_client_tags(cid)
         tags_str = ", ".join(t[1] for t in tags) if tags else ""
-        who = f"@{added_by_uname}" if added_by_uname else (f"#{added_by_uid}" if added_by_uid else "")
+        who = (
+            f"@{added_by_uname}"
+            if added_by_uname
+            else (f"#{added_by_uid}" if added_by_uid else "")
+        )
         values = [cid, name, phone, tags_str, notes or "", created_at[:10], who]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
@@ -748,49 +800,49 @@ async def backup_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Matches phone numbers in various international formats:
 # +30698111111 | +30 698 333 3333 | 6982222222 | +7 999 123-45-67 | 8(999)123-45-67
-_PHONE_RE = re.compile(r'\+?\d[\d\s\-\(\)\.]{5,18}\d')
+_PHONE_RE = re.compile(r"\+?\d[\d\s\-\(\)\.]{5,18}\d")
 
 # Letters that look like a person/company name (Cyrillic + Latin)
-_NAME_CHARS = re.compile(r'[А-ЯЁа-яёA-Za-z]')
+_NAME_CHARS = re.compile(r"[А-ЯЁа-яёA-Za-z]")
 
 
 def _normalize_phone(raw: str) -> str:
-    digits = re.sub(r'\D', '', raw)
+    digits = re.sub(r"\D", "", raw)
     # Normalize Russian: leading 8 → 7
-    if digits.startswith('8'):
-        digits = '7' + digits[1:]
+    if digits.startswith("8"):
+        digits = "7" + digits[1:]
     # Russian 11-digit (7XXXXXXXXXX)
-    if len(digits) == 11 and digits.startswith('7'):
-        return '+' + digits
+    if len(digits) == 11 and digits.startswith("7"):
+        return "+" + digits
     # Russian 10-digit without country code
-    if len(digits) == 10 and not raw.strip().startswith('+'):
-        return '+7' + digits
+    if len(digits) == 10 and not raw.strip().startswith("+"):
+        return "+7" + digits
     # International with explicit + (e.g. +30698111111)
-    if raw.strip().startswith('+') and len(digits) >= 7:
-        return '+' + digits
+    if raw.strip().startswith("+") and len(digits) >= 7:
+        return "+" + digits
     # Any other number with enough digits
     if len(digits) >= 7:
         return digits
-    return ''
+    return ""
 
 
 def _check_phone(phone: str) -> str:
     """Returns 'blacklisted', 'exists', or 'new' — queries live SQLite DB."""
     if db.is_blacklisted(phone):
-        return 'blacklisted'
+        return "blacklisted"
     if db.search_by_phone(phone):
-        return 'exists'
-    return 'new'
+        return "exists"
+    return "new"
 
 
 def _extract_name_from_line(line: str, phone_match: re.Match) -> str:
     """Remove the phone number from the line; return remaining text as name."""
-    before = line[:phone_match.start()].strip()
-    after = line[phone_match.end():].strip()
-    candidate = (before + ' ' + after).strip()
+    before = line[: phone_match.start()].strip()
+    after = line[phone_match.end() :].strip()
+    candidate = (before + " " + after).strip()
     # Keep only parts that contain at least one letter
     parts = [p for p in candidate.split() if _NAME_CHARS.search(p)]
-    return ' '.join(parts)
+    return " ".join(parts)
 
 
 def _parse_contacts_from_text(text: str) -> list[tuple[str, str]]:
@@ -818,7 +870,11 @@ def _parse_contacts_from_text(text: str) -> list[tuple[str, str]]:
                     idx = i + offset
                     if 0 <= idx < len(lines):
                         adj = lines[idx]
-                        if adj and not _PHONE_RE.search(adj) and _NAME_CHARS.search(adj):
+                        if (
+                            adj
+                            and not _PHONE_RE.search(adj)
+                            and _NAME_CHARS.search(adj)
+                        ):
                             name = adj.strip()
                             break
 
@@ -866,9 +922,9 @@ async def receive_import_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     for phone, name in contacts:
         try:
             status = _check_phone(phone)
-            if status == 'blacklisted':
+            if status == "blacklisted":
                 blacklisted += 1
-            elif status == 'exists':
+            elif status == "exists":
                 duplicates += 1
             else:
                 db.add_client(
@@ -898,9 +954,11 @@ async def receive_import_text(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ─── Auto phone search ───────────────────────────────────────────────────────
 
+
 class _PhoneLikeFilter(filters.MessageFilter):
     """Matches messages whose entire content looks like a phone number."""
-    _PAT = re.compile(r'^[\+\d][\d\s\-\(\)\.]{4,22}$')
+
+    _PAT = re.compile(r"^[\+\d][\d\s\-\(\)\.]{4,22}$")
 
     def filter(self, message):
         if not message.text:
@@ -908,7 +966,7 @@ class _PhoneLikeFilter(filters.MessageFilter):
         t = message.text.strip()
         if not self._PAT.match(t):
             return False
-        return len(re.sub(r'\D', '', t)) >= 7
+        return len(re.sub(r"\D", "", t)) >= 7
 
 
 _phone_like = _PhoneLikeFilter()
@@ -916,20 +974,20 @@ _phone_like = _PhoneLikeFilter()
 
 async def auto_search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
-    digits = re.sub(r'\D', '', raw)
+    digits = re.sub(r"\D", "", raw)
 
     # search_by_phone uses LIKE %digits% so it matches +7xxx, 7xxx, 8xxx, etc.
     clients = list(db.search_by_phone(digits))
 
     # Also try 8↔7 variant to cover both storage formats
-    if digits.startswith('7') and len(digits) == 11:
-        alt = '8' + digits[1:]
+    if digits.startswith("7") and len(digits) == 11:
+        alt = "8" + digits[1:]
         seen_ids = {c[0] for c in clients}
         for c in db.search_by_phone(alt):
             if c[0] not in seen_ids:
                 clients.append(c)
-    elif digits.startswith('8') and len(digits) == 11:
-        alt = '7' + digits[1:]
+    elif digits.startswith("8") and len(digits) == 11:
+        alt = "7" + digits[1:]
         seen_ids = {c[0] for c in clients}
         for c in db.search_by_phone(alt):
             if c[0] not in seen_ids:
@@ -981,9 +1039,13 @@ def main():
     )
 
     search_name_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(search_by_name_start, pattern="^search_by_name$")],
+        entry_points=[
+            CallbackQueryHandler(search_by_name_start, pattern="^search_by_name$")
+        ],
         states={
-            SEARCH_BY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_name)],
+            SEARCH_BY_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_name)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -991,9 +1053,13 @@ def main():
     )
 
     search_phone_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(search_by_phone_start, pattern="^search_by_phone$")],
+        entry_points=[
+            CallbackQueryHandler(search_by_phone_start, pattern="^search_by_phone$")
+        ],
         states={
-            SEARCH_BY_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_phone)],
+            SEARCH_BY_PHONE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_phone)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -1001,9 +1067,13 @@ def main():
     )
 
     edit_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_field_prompt, pattern=r"^editfield_\d+_\w+$")],
+        entry_points=[
+            CallbackQueryHandler(edit_field_prompt, pattern=r"^editfield_\d+_\w+$")
+        ],
         states={
-            EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_save)],
+            EDIT_VALUE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_save)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -1013,7 +1083,9 @@ def main():
     bl_add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(bl_add_start, pattern="^bl_add$")],
         states={
-            BL_ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_phone)],
+            BL_ADD_PHONE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_phone)
+            ],
             BL_ADD_REASON: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_reason),
                 CommandHandler("skip", bl_skip_reason),
@@ -1027,7 +1099,9 @@ def main():
     bl_remove_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(bl_remove_start, pattern="^bl_remove$")],
         states={
-            BL_REMOVE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_remove_phone)],
+            BL_REMOVE_PHONE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bl_remove_phone)
+            ],
         },
         fallbacks=[CommandHandler("cancel", bl_cancel)],
         per_message=False,
@@ -1048,7 +1122,9 @@ def main():
     import_text_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(import_text_start, pattern="^import_text$")],
         states={
-            IMPORT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_import_text)],
+            IMPORT_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_import_text)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -1064,7 +1140,9 @@ def main():
     app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
     app.add_handler(CallbackQueryHandler(all_clients, pattern="^all_clients$"))
     app.add_handler(CallbackQueryHandler(delete_client, pattern=r"^delete_\d+$"))
-    app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete_\d+$"))
+    app.add_handler(
+        CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete_\d+$")
+    )
     app.add_handler(CallbackQueryHandler(edit_client, pattern=r"^edit_\d+$"))
     app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
     app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
@@ -1072,9 +1150,13 @@ def main():
     app.add_handler(CallbackQueryHandler(backup_db, pattern="^backup_db$"))
     app.add_handler(CallbackQueryHandler(search_by_tag_menu, pattern="^search_by_tag$"))
     app.add_handler(CallbackQueryHandler(do_search_by_tag, pattern=r"^stag_\d+$"))
-    app.add_handler(CallbackQueryHandler(client_tags_menu, pattern=r"^client_tags_\d+$"))
+    app.add_handler(
+        CallbackQueryHandler(client_tags_menu, pattern=r"^client_tags_\d+$")
+    )
     app.add_handler(CallbackQueryHandler(toggle_client_tag, pattern=r"^ctag_\d+_\d+$"))
-    app.add_handler(CallbackQueryHandler(finish_client_tags, pattern=r"^ctags_done_\d+$"))
+    app.add_handler(
+        CallbackQueryHandler(finish_client_tags, pattern=r"^ctags_done_\d+$")
+    )
 
     logger.info("Бот запускается...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
