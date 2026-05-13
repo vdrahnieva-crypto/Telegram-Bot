@@ -1,0 +1,162 @@
+def build_bot_app():
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN or BOT_TOKEN environment variable not set")
+
+    app = Application.builder().token(token).build()
+
+    add_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_client_start, pattern="^add_client$")],
+        states={
+            ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+            ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_phone)],
+            ADD_NOTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_notes)],
+            ADD_TAGS: [
+                CallbackQueryHandler(toggle_add_tag, pattern=r"^addtag_\d+$"),
+                CallbackQueryHandler(finish_add_tags, pattern="^addtags_done$"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    search_name_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(search_by_name_start, pattern="^search_by_name$")],
+        states={
+            SEARCH_BY_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_name)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    search_phone_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(search_by_phone_start, pattern="^search_by_phone$")],
+        states={
+            SEARCH_BY_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_search_by_phone)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    edit_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(edit_field_prompt, pattern=r"^editfield_\d+_\w+$")],
+        states={
+            EDIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value_save)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    bl_add_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(bl_add_start, pattern="^bl_add$")],
+        states={
+            BL_ADD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_phone)],
+            BL_ADD_REASON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bl_add_reason),
+                CommandHandler("skip", bl_skip_reason),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", bl_cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    bl_remove_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(bl_remove_start, pattern="^bl_remove$")],
+        states={
+            BL_REMOVE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bl_remove_phone)],
+        },
+        fallbacks=[CommandHandler("cancel", bl_cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    import_text_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(import_text_start, pattern="^import_text$")],
+        states={
+            IMPORT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_import_text)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True,
+    )
+
+    app.add_handler(MessageHandler(filters.ALL, _private_block_message), group=-1)
+    app.add_handler(CallbackQueryHandler(_private_block_callback), group=-1)
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(add_conv)
+    app.add_handler(search_name_conv)
+    app.add_handler(search_phone_conv)
+    app.add_handler(edit_conv)
+    app.add_handler(bl_add_conv)
+    app.add_handler(bl_remove_conv)
+    app.add_handler(import_text_conv)
+
+    app.add_handler(MessageHandler(_phone_like & filters.TEXT, auto_search_phone))
+
+    app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(find_client_menu, pattern="^find_client$"))
+    app.add_handler(CallbackQueryHandler(all_clients, pattern="^all_clients$"))
+    app.add_handler(CallbackQueryHandler(delete_client, pattern=r"^delete_\d+$"))
+    app.add_handler(CallbackQueryHandler(confirm_delete, pattern=r"^confirm_delete_\d+$"))
+    app.add_handler(CallbackQueryHandler(edit_client, pattern=r"^edit_\d+$"))
+    app.add_handler(CallbackQueryHandler(blacklist_menu, pattern="^blacklist_menu$"))
+    app.add_handler(CallbackQueryHandler(bl_show, pattern="^bl_show$"))
+    app.add_handler(CallbackQueryHandler(export_excel, pattern="^export_excel$"))
+    app.add_handler(CallbackQueryHandler(backup_db, pattern="^backup_db$"))
+    app.add_handler(CallbackQueryHandler(search_by_tag_menu, pattern="^search_by_tag$"))
+    app.add_handler(CallbackQueryHandler(do_search_by_tag, pattern=r"^stag_\d+$"))
+    app.add_handler(CallbackQueryHandler(client_tags_menu, pattern=r"^client_tags_\d+$"))
+    app.add_handler(CallbackQueryHandler(toggle_client_tag, pattern=r"^ctag_\d+_\d+$"))
+    app.add_handler(CallbackQueryHandler(finish_client_tags, pattern=r"^ctags_done_\d+$"))
+
+    return app
+
+
+telegram_app = build_bot_app()
+web_app = FastAPI()
+
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "telegram-webhook")
+
+
+@web_app.get("/")
+async def health_check():
+    return {"status": "ok", "bot": "running"}
+
+
+@web_app.post(f"/{WEBHOOK_SECRET}")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+
+@web_app.on_event("startup")
+async def on_startup():
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    webhook_url = os.environ.get("WEBHOOK_URL") or os.environ.get("REPLIT_URL")
+    if webhook_url:
+        webhook_url = webhook_url.rstrip("/") + "/" + WEBHOOK_SECRET
+        await telegram_app.bot.set_webhook(webhook_url)
+        logger.info("Webhook установлен: %s", webhook_url)
+    else:
+        logger.warning("WEBHOOK_URL or REPLIT_URL не указан")
+
+
+@web_app.on_event("shutdown")
+async def on_shutdown():
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)

@@ -1,3 +1,5 @@
 python-telegram-bot==21.10
 openpyxl
-flask
+fastapi
+uvicorn[standard]
+httpx

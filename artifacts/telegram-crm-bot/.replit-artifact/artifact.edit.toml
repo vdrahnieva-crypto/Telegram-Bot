@@ -1,0 +1,22 @@
+kind = "api"
+  previewPath = "/healthz"
+  title = "Telegram CRM Bot"
+  version = "1.0.0"
+  id = "telegram-crm-bot"
+
+  [[services]]
+  localPort = 8090
+  name = "Telegram CRM Bot"
+  paths = ["/"]
+
+  [services.development]
+  run = "python3 artifacts/telegram-crm-bot/bot.py"
+
+  [services.production]
+
+  [services.production.run]
+  args = ["python3", "artifacts/telegram-crm-bot/bot.py"]
+
+  [services.production.run.env]
+  PORT = "8090"
+  

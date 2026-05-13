@@ -1,4 +1,6 @@
 import os
+import uvicorn
+from fastapi import FastAPI, Request
 import io
 import re
 import logging
@@ -1015,7 +1017,7 @@ async def auto_search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-def main():
+def build_bot_app():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable not set")
@@ -1108,17 +1110,6 @@ def main():
         per_chat=True,
     )
 
-    app.add_handler(MessageHandler(filters.ALL, _private_block_message), group=-1)
-    app.add_handler(CallbackQueryHandler(_private_block_callback), group=-1)
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(add_conv)
-    app.add_handler(search_name_conv)
-    app.add_handler(search_phone_conv)
-    app.add_handler(edit_conv)
-    app.add_handler(bl_add_conv)
-    app.add_handler(bl_remove_conv)
-
     import_text_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(import_text_start, pattern="^import_text$")],
         states={
@@ -1130,10 +1121,19 @@ def main():
         per_message=False,
         per_chat=True,
     )
+
+    app.add_handler(MessageHandler(filters.ALL, _private_block_message), group=-1)
+    app.add_handler(CallbackQueryHandler(_private_block_callback), group=-1)
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(add_conv)
+    app.add_handler(search_name_conv)
+    app.add_handler(search_phone_conv)
+    app.add_handler(edit_conv)
+    app.add_handler(bl_add_conv)
+    app.add_handler(bl_remove_conv)
     app.add_handler(import_text_conv)
 
-    # Auto phone search — registered after all ConversationHandlers so those
-    # always take priority when a user is mid-conversation.
     app.add_handler(MessageHandler(_phone_like & filters.TEXT, auto_search_phone))
 
     app.add_handler(CallbackQueryHandler(menu, pattern="^menu$"))
@@ -1158,9 +1158,55 @@ def main():
         CallbackQueryHandler(finish_client_tags, pattern=r"^ctags_done_\d+$")
     )
 
-    logger.info("Бот запускается...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    return app
+
+
+telegram_app = build_bot_app()
+web_app = FastAPI()
+
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "tg-crm-hook")
+
+
+@web_app.get("/healthz")
+async def health_check():
+    return {"status": "ok", "bot": "running"}
+
+
+@web_app.post(f"/{WEBHOOK_SECRET}")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+
+@web_app.on_event("startup")
+async def on_startup():
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    domains = os.environ.get("REPLIT_DOMAINS", "")
+    primary_domain = domains.split(",")[0].strip() if domains else ""
+    webhook_url = os.environ.get("WEBHOOK_URL", "")
+    if not webhook_url and primary_domain:
+        webhook_url = f"https://{primary_domain}/api/telegram/webhook"
+
+    if webhook_url:
+        await telegram_app.bot.set_webhook(
+            webhook_url, allowed_updates=list(Update.ALL_TYPES)
+        )
+        logger.info("Webhook установлен: %s", webhook_url)
+    else:
+        logger.warning("Не удалось определить URL для webhook")
+
+
+@web_app.on_event("shutdown")
+async def on_shutdown():
+    await telegram_app.stop()
+    await telegram_app.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 8090))
+    logger.info("Бот запускается на порту %d (webhook mode)...", port)
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
